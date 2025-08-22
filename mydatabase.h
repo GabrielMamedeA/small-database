@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+#include <ctype.h>
 
 typedef struct{
     unsigned short id;
@@ -24,6 +25,7 @@ typedef struct{
 void clearInputBuffer();
 unsigned short getNextBookID();
 void printBook(Book book);
+void dataDirectoryCheck();
 
 //Basic CRUD;
 void createBook();
@@ -42,6 +44,8 @@ void searchBookActive();
 
 //List All books in the database
 void listBooks();
-
+void listBooksTxt();
+void exportBooksToTxt();
+void importBooksFromCsv();
 
 #endif // MYDATABASE_H

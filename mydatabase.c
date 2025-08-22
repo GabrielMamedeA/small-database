@@ -6,22 +6,21 @@ void clearInputBuffer(){
 }
 
 unsigned short getNextBookID(){
-    FILE *f = fopen("last_id.dat", "r+b");
+    FILE *f = fopen("data/last_id.dat", "r+b");
 
     if (!f) {
-        printf("Error opening file.\n");
-        return 0;
-    }
-
-    // If the file does not exist, create it
-    if (fseek(f, 0, SEEK_END) == 0 && ftell(f) == 0) {
+        // Try to create the file if it does not exist
+        f = fopen("data/last_id.dat", "w+b");
+        if (!f) {
+            printf("Error creating file.\n");
+            return 0;
+        }
         // Initialize the file with the first ID
         unsigned short initialID = 0;
         fwrite(&initialID, sizeof(unsigned short), 1, f);
+        fflush(f);
+        rewind(f);
     }
-
-    // Move the file pointer to the beginning
-    rewind(f);  
 
     unsigned short id = 0;
 
@@ -29,7 +28,6 @@ unsigned short getNextBookID(){
     fread(&id, sizeof(unsigned short), 1, f);
     id++;
     
-
     //Back to the start of the file
     rewind(f);
 
@@ -43,9 +41,9 @@ unsigned short getNextBookID(){
 void printBook(Book book){
     printf("\nBook id: %hu", book.id);
     printf("\nBook title: %s", book.title);
-    printf("Author name: %s", book.author);
-    printf("Book theme: %s", book.theme);
-    printf("Release year: %hu", book.releaseYear);
+    printf("\nAuthor name: %s", book.author);
+    printf("\nBook theme: %s", book.theme);
+    printf("\nRelease year: %hu", book.releaseYear);
     printf("\nBook was read: %s\n", book.read ? "Yes" : "No");
 }
 
@@ -54,10 +52,13 @@ void createBook(){
     Book tmp;
     printf("Enter book title: ");
     fgets(tmp.title, MAX_TITLE_LENGTH, stdin);
+    tmp.title[strcspn(tmp.title, "\n")] = 0;
     printf("Enter author name: ");
     fgets(tmp.author, MAX_AUTHOR_NAME_LENGTH, stdin);
+    tmp.author[strcspn(tmp.author, "\n")] = 0;
     printf("Enter book theme: ");
     fgets(tmp.theme, MAX_THEME_LENGTH, stdin);
+    tmp.theme[strcspn(tmp.theme, "\n")] = 0;
     printf("Enter release year: ");
     scanf("%hu", &tmp.releaseYear);
     clearInputBuffer(); // Clear the input buffer after scanf
@@ -65,7 +66,7 @@ void createBook(){
     tmp.active = true;
     tmp.id = getNextBookID();
 
-    FILE *f = fopen("books.dat", "ab");
+    FILE *f = fopen("data/books.dat", "ab");
     if (f){
         fwrite(&tmp, sizeof(Book), 1, f);
         //Book added successfully
@@ -78,7 +79,7 @@ void createBook(){
 }
 
 void readBook(unsigned short id){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -102,7 +103,7 @@ void readBook(unsigned short id){
 }
 
 void deleteBook(unsigned short id){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -130,7 +131,7 @@ void deleteBook(unsigned short id){
 } 
 
 void updateBook(unsigned short id){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -164,7 +165,7 @@ void searchBookID(unsigned short id){
 }
 
 void searchBookTitle(char title[MAX_TITLE_LENGTH]){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -189,7 +190,7 @@ void searchBookTitle(char title[MAX_TITLE_LENGTH]){
 }
 
 void searchBookAuthor(char author[MAX_AUTHOR_NAME_LENGTH]){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -213,7 +214,7 @@ void searchBookAuthor(char author[MAX_AUTHOR_NAME_LENGTH]){
 }
 
 void searchBookTheme(char theme[MAX_THEME_LENGTH]){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -237,7 +238,7 @@ void searchBookTheme(char theme[MAX_THEME_LENGTH]){
 }
 
 void searchBookRead(bool read){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -261,7 +262,7 @@ void searchBookRead(bool read){
 }
 
 void searchBookYear(unsigned short year){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -285,7 +286,7 @@ void searchBookYear(unsigned short year){
 }
 
 void searchBookActive(){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -309,7 +310,7 @@ void searchBookActive(){
 }
 
 void listBooks(){
-    FILE *f = fopen("books.dat", "rb");
+    FILE *f = fopen("data/books.dat", "rb");
     if (!f) {
         printf("Error opening file.\n");
         return;
@@ -323,4 +324,130 @@ void listBooks(){
     //Print all books even if is inactive
 
     fclose(f);
+}
+
+void listBooksTxt(){
+    FILE *f = fopen("data/books.dat", "rb");
+    if (!f) {
+        printf("Error opening file.\n");
+        return; 
+    } 
+    Book tmp = {0};
+
+    char archivePath[150];
+    char archiveName[100];
+
+    printf("Enter the name of the file to export to (without extension): ");
+    fgets(archiveName, sizeof(archiveName), stdin);
+
+    archiveName[strcspn(archiveName, "\n")] = 0;
+
+    snprintf(archivePath, sizeof(archivePath), "data/%s.txt", archiveName);
+
+    FILE *exportFile = fopen(archivePath, "w");
+    if (!exportFile) {
+        printf("Error creating export file.\n");
+        fclose(f);
+        return;
+    }
+
+    while (fread(&tmp, sizeof(Book), 1, f))
+    {
+        fprintf(exportFile, "ID: %hu\n", tmp.id);
+        fprintf(exportFile, "Title: %s\n", tmp.title);
+        fprintf(exportFile, "Author: %s\n", tmp.author);
+        fprintf(exportFile, "Theme: %s\n", tmp.theme);
+        fprintf(exportFile, "Read: %s\n", tmp.read ? "Yes" : "No");
+        fprintf(exportFile, "Release Year: %hu\n", tmp.releaseYear);
+        fprintf(exportFile, "Active: %s\n", tmp.active ? "Yes" : "No");
+        fprintf(exportFile, "-------------------------\n");
+    }
+
+    fclose(exportFile);
+    fclose(f);
+}
+
+void exportBooksToTxt(){
+    listBooksTxt();
+}
+
+void importBooksFromCsv(){
+    char archivePath[150];
+    char archiveName[100];
+
+    printf("Enter the name of the CSV file to import from (without extension): ");
+    fgets(archiveName, sizeof(archiveName), stdin);
+
+    archiveName[strcspn(archiveName, "\n")] = 0;
+
+    snprintf(archivePath, sizeof(archivePath), "data/%s.csv", archiveName);
+
+    FILE *csvFile = fopen(archivePath, "r");
+    if (!csvFile) {
+        printf("Error opening CSV file.\n");
+        return;
+    }
+
+    FILE *dbFile = fopen("data/books.dat", "ab");
+    if (!dbFile) {
+        printf("Error opening database file.\n");
+        fclose(csvFile);
+        return;
+    }
+
+    char line[512];
+    while (fgets(line, sizeof(line), csvFile)) {
+        Book tmp;
+        char *token;
+
+        tmp.id = getNextBookID(); // Get a new ID for the book
+        // Remove newline character from the end of the line
+        line[strcspn(line, "\n")] = 0;
+
+        // Get Title
+        token = strtok(line, ",");
+        if (token) strncpy(tmp.title, token, MAX_TITLE_LENGTH);
+        else continue;
+
+        // Get Author
+        token = strtok(NULL, ",");
+        if (token) strncpy(tmp.author, token, MAX_AUTHOR_NAME_LENGTH);
+        else continue;
+
+        // Get Theme
+        token = strtok(NULL, ",");
+        if (token) strncpy(tmp.theme, token, MAX_THEME_LENGTH);
+        else continue;
+
+        // Get Read status
+        token = strtok(NULL, ",");
+        if (token) tmp.read = (strcmp(token, "1") == 0);
+        else continue;
+
+        // Get Release Year
+        token = strtok(NULL, ",");
+        if (token) tmp.releaseYear = (unsigned short)atoi(token);
+        else continue;
+
+        // Set active to true for imported books
+        tmp.active = true;
+
+        // Write to database
+        fwrite(&tmp, sizeof(Book), 1, dbFile);
+    }
+
+    fclose(csvFile);
+    fclose(dbFile);
+    printf("Books imported successfully from %s\n", archivePath);
+}
+
+void dataDirectoryCheck(){
+    // Check if the "data" directory exists, if not create it
+    #ifdef _WIN32
+        system("if not exist data mkdir data");
+    #else
+        system("mkdir -p data");
+    #endif
+
+    //The "data" directory is now ensured to exist
 }

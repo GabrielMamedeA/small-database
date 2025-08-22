@@ -2,6 +2,7 @@
 
 int main(){
     int option;
+    dataDirectoryCheck(); // Ensure the data directory exists
 
     printf("Welcome to the Book Database!\n");
     do {
@@ -18,6 +19,8 @@ int main(){
         printf("10. Search Books by Release Year\n");
         printf("11. List All Active Books\n");
         printf("12. List All Books\n");
+        printf("13. Import Books from CSV\n");
+        printf("14. Export Books to TXT\n");
         printf("0. Exit\n");
         printf("Choose an option: ");
         scanf("%d", &option);
@@ -103,6 +106,12 @@ int main(){
                 break;
             case 12:
                 listBooks();
+                break;
+            case 13:
+                importBooksFromCsv();
+                break;
+            case 14:
+                exportBooksToTxt();
                 break;
             case 0:
                 printf("Exiting the program. Goodbye!\n");
