@@ -2,3 +2,4 @@ data/*.dat
 library
 .vscode/*.json
 data/*.csv
+.DS_Store
