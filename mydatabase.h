@@ -34,11 +34,11 @@ void deleteBook(unsigned short id);
 //Search Books by their atributtes
 void searchBookID(unsigned short id);
 void searchBookTitle(char title[MAX_TITLE_LENGTH]);
-void searchBookAuthor(char title[MAX_AUTHOR_NAME_LENGTH]);
-void searchBookTheme(char title[MAX_THEME_LENGTH]);
+void searchBookAuthor(char author[MAX_AUTHOR_NAME_LENGTH]);
+void searchBookTheme(char theme[MAX_THEME_LENGTH]);
 void searchBookRead(bool read);
 void searchBookYear(unsigned short year);
-void searchBookActive(bool active);
+void searchBookActive();
 
 //List All books in the database
 void listBooks();
