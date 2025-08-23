@@ -138,12 +138,15 @@ int main(){
                         clearInputBuffer();
 
                         printf("Search for Read Books? (1 for Yes, 0 for No): ");
-                        scanf("%d", &read);
+                        int readInput, activeInput;
+                        scanf("%d", &readInput);
                         clearInputBuffer();
+                        read = (readInput != 0);
 
                         printf("Search for Active Books? (1 for Yes, 0 for No): ");
-                        scanf("%d", &active);
+                        scanf("%d", &activeInput);
                         clearInputBuffer();
+                        active = (activeInput != 0);
 
                         searchBooksMultipleCriteria(
                             strlen(title) > 0 ? title : NULL,
