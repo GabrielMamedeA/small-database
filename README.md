@@ -35,6 +35,7 @@ project/
 │── mydatabase.h    # Function declarations and struct definitions
 │── data/           # Folder to store .dat files
 │   ├── books.dat
-│   └── last_id.dat
+│   ├── last_id.dat
+│   └── backup_books.dat
 
 ```

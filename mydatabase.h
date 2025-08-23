@@ -26,6 +26,7 @@ void clearInputBuffer();
 unsigned short getNextBookID();
 void printBook(Book book);
 void dataDirectoryCheck();
+unsigned short getId();
 
 //Basic CRUD;
 void createBook();
@@ -47,5 +48,45 @@ void listBooks();
 void listBooksTxt();
 void exportBooksToTxt();
 void importBooksFromCsv();
+void compressDatabase();
+void decompressDatabase();
+
+//Sort books by their attributes
+void sortBooksByTitle();
+void sortBooksByAuthor();
+void sortBooksByYear();
+void sortBooksByTheme();
+void sortBooksByID();
+
+int compareBooksByReleaseYear(const void *a, const void *b);
+int compareBooksByTitle(const void *a, const void *b);
+int compareBooksByAuthor(const void *a, const void *b);
+int compareBooksByTheme(const void *a, const void *b);
+int compareBooksByID(const void *a, const void *b);
+
+//Additional functionalities
+void markBookAsRead(unsigned short id);
+void markBookAsUnread(unsigned short id);
+
+// Count books in the database
+void countBooks();
+void countBooksByTheme(char theme[MAX_THEME_LENGTH]);
+void countBooksByAuthor(char author[MAX_AUTHOR_NAME_LENGTH]);
+
+// Backup and restore functionalities
+void backupDatabase();
+void restoreDatabase();
+
+// Get oldest and newest book
+void getOldestBook();
+void getNewestBook();
+
+//Database statistics
+void getDatabaseStatistics();
+long getDatabaseSizeInBytes();
+void printDatabaseSize();
+
+// Search books with multiple criteria
+void searchBooksMultipleCriteria(const char *title, const char *author, const char *theme, unsigned short year, bool read, bool active);
 
 #endif // MYDATABASE_H
