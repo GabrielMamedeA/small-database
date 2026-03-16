@@ -907,21 +907,476 @@ void sortBooksByTheme(){
     free(books);
 }
 
-void compressDatabase(){
-    // Placeholder for future implementation
-    //LZW Compression
-    printf("Database compression functionality is not yet implemented.\n");
+/* ─────────────────────────────────────────────────────────────────────────────
+ * LZW Compression  (12-bit codes → up to 4096 dictionary entries)
+ * Output file format:
+ *   [4 bytes] magic  "LZW\x01"
+ *   [8 bytes] original file size (uint64_t, little-endian)
+ *   [n bytes] 12-bit codes packed two per three bytes
+ *             (code_A[11:4] | code_A[3:0]<<4|code_B[11:8] | code_B[7:0])
+ * ───────────────────────────────────────────────────────────────────────── */
+
+#define LZW_MAX_CODES  4096   /* 2^12 */
+#define LZW_BITS       12
+
+/* Hash-table entry for the compression dictionary */
+typedef struct {
+    int  prefix;   /* code of the prefix string (-1 = empty slot) */
+    int  byte;     /* the extension byte                           */
+    int  code;     /* the code assigned to this entry              */
+} LZWEntry;
+
+static int lzw_hash(int prefix, int byte) {
+    /* simple hash: mix prefix and byte */
+    unsigned h = (unsigned)(prefix * 256 + byte);
+    h = (h ^ (h >> 16)) * 0x45d9f3b;
+    return (int)(h % LZW_MAX_CODES);
 }
 
-void decompressDatabase(){
-    // Placeholder for future implementation
-    //LZW Decompression
-    printf("Database decompression functionality is not yet implemented.\n");
+static int lzw_find(LZWEntry *dict, int prefix, int byte) {
+    int h = lzw_hash(prefix, byte);
+    while (dict[h].prefix != -1) {
+        if (dict[h].prefix == prefix && dict[h].byte == byte)
+            return dict[h].code;
+        h = (h + 1) % LZW_MAX_CODES;
+    }
+    return -1;
 }
 
-void getDatabaseStatistics(){
-    // Placeholder for future implementation
-    printf("Database statistics functionality is not yet implemented.\n");
+static void lzw_insert(LZWEntry *dict, int prefix, int byte, int code) {
+    int h = lzw_hash(prefix, byte);
+    while (dict[h].prefix != -1)
+        h = (h + 1) % LZW_MAX_CODES;
+    dict[h].prefix = prefix;
+    dict[h].byte   = byte;
+    dict[h].code   = code;
+}
+
+/* Write 12-bit codes packed two per three bytes into buf; flush to file. */
+typedef struct {
+    FILE         *out;
+    unsigned char buf[3];
+    int           pending;   /* 0 or 1 half-stored code */
+    int           pending_code;
+} BitWriter;
+
+static void bw_flush(BitWriter *bw) {
+    if (bw->pending) {
+        /* we have one code that was stored in the high nibble of buf[1]; buf[2] = 0 */
+        bw->buf[1] = (unsigned char)((bw->pending_code & 0x0F) << 4);
+        bw->buf[2] = 0;
+        fwrite(bw->buf, 1, 3, bw->out);
+        bw->pending = 0;
+    }
+}
+
+static void bw_write_code(BitWriter *bw, int code) {
+    if (!bw->pending) {
+        /* first code of a pair: occupies buf[0] and high nibble of buf[1] */
+        bw->buf[0] = (unsigned char)((code >> 4) & 0xFF);
+        bw->pending_code = code;
+        bw->pending = 1;
+    } else {
+        /* second code of a pair */
+        bw->buf[1] = (unsigned char)(((bw->pending_code & 0x0F) << 4) | ((code >> 8) & 0x0F));
+        bw->buf[2] = (unsigned char)(code & 0xFF);
+        fwrite(bw->buf, 1, 3, bw->out);
+        bw->pending = 0;
+    }
+}
+
+void compressDatabase() {
+    /* 1. Open source file */
+    FILE *src = fopen("data/books.dat", "rb");
+    if (!src) {
+        printf("Error: could not open data/books.dat for reading.\n");
+        return;
+    }
+
+    /* Measure size */
+    fseek(src, 0, SEEK_END);
+    long src_size = ftell(src);
+    fseek(src, 0, SEEK_SET);
+
+    if (src_size == 0) {
+        printf("Database is empty – nothing to compress.\n");
+        fclose(src);
+        return;
+    }
+
+    /* 2. Open destination file */
+    FILE *dst = fopen("data/books.lzw", "wb");
+    if (!dst) {
+        printf("Error: could not create data/books.lzw.\n");
+        fclose(src);
+        return;
+    }
+
+    /* 3. Write header */
+    const unsigned char magic[4] = {'L','Z','W','\x01'};
+    fwrite(magic, 1, 4, dst);
+    uint64_t orig_size = (uint64_t)src_size;
+    fwrite(&orig_size, sizeof(orig_size), 1, dst);
+
+    /* 4. Initialise dictionary (256 single-byte entries) */
+    LZWEntry *dict = (LZWEntry *)malloc(sizeof(LZWEntry) * LZW_MAX_CODES);
+    if (!dict) {
+        printf("Memory allocation error.\n");
+        fclose(src); fclose(dst);
+        return;
+    }
+    memset(dict, -1, sizeof(LZWEntry) * LZW_MAX_CODES);
+    /* We do NOT pre-fill the hash table with the 256 symbols; instead we handle
+       single-byte codes directly (code == byte) and only hash multi-byte strings */
+    int next_code = 256;
+
+    BitWriter bw = { dst, {0}, 0, 0 };
+
+    /* 5. LZW encoding loop */
+    int c = fgetc(src);
+    if (c == EOF) {
+        /* Empty – already handled above */
+        free(dict);
+        fclose(src); fclose(dst);
+        return;
+    }
+    int w = c; /* current prefix code */
+
+    while ((c = fgetc(src)) != EOF) {
+        int code = lzw_find(dict, w, c);
+        if (code != -1) {
+            /* w+c is already in the dictionary */
+            w = code;
+        } else {
+            /* Emit w */
+            bw_write_code(&bw, w);
+            /* Add w+c to the dictionary if there is still room */
+            if (next_code < LZW_MAX_CODES) {
+                lzw_insert(dict, w, c, next_code++);
+            }
+            w = c;
+        }
+    }
+    /* Emit the last code */
+    bw_write_code(&bw, w);
+    bw_flush(&bw);
+
+    free(dict);
+    fclose(src);
+    fclose(dst);
+
+    /* Report results */
+    FILE *chk = fopen("data/books.lzw", "rb");
+    long compressed_size = 0;
+    if (chk) { fseek(chk,0,SEEK_END); compressed_size = ftell(chk); fclose(chk); }
+
+    printf("Compression complete!\n");
+    printf("  Original : %ld bytes\n", src_size);
+    printf("  Compressed: %ld bytes\n", compressed_size);
+    if (src_size > 0)
+        printf("  Ratio    : %.1f%%\n", 100.0 * compressed_size / src_size);
+    printf("  Saved to : data/books.lzw\n");
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * LZW Decompression
+ * ───────────────────────────────────────────────────────────────────────── */
+
+/* Decompression dictionary: each entry stores the full string as a chain */
+typedef struct {
+    int  prefix;  /* code of the prefix, or -1 for single-byte entries */
+    int  byte;    /* the last byte of this entry                        */
+} LZWDecEntry;
+
+/* Recursively write the string represented by code to buf (reversed order),
+   returns the number of bytes written. */
+static int lzw_decode_string(LZWDecEntry *dict, unsigned char *buf, int code) {
+    int len = 0;
+    while (code >= 256) {
+        buf[len++] = (unsigned char)dict[code].byte;
+        code = dict[code].prefix;
+    }
+    buf[len++] = (unsigned char)code;
+    /* buf is in reverse order – reverse it */
+    for (int i = 0, j = len - 1; i < j; i++, j--) {
+        unsigned char tmp = buf[i]; buf[i] = buf[j]; buf[j] = tmp;
+    }
+    return len;
+}
+
+/* Read the next 12-bit code from the packed stream; returns -1 on EOF */
+typedef struct {
+    FILE         *in;
+    unsigned char buf[3];
+    int           pending;   /* 0 or 1 code buffered from previous triple */
+    int           pending_code;
+} BitReader;
+
+static int br_read_code(BitReader *br) {
+    if (br->pending) {
+        br->pending = 0;
+        return br->pending_code;
+    }
+    unsigned char b[3];
+    if (fread(b, 1, 3, br->in) < 3) return -1;
+    int code_a = ((int)b[0] << 4) | ((b[1] >> 4) & 0x0F);
+    int code_b = (((int)b[1] & 0x0F) << 8) | b[2];
+    br->pending_code = code_b;
+    br->pending = 1;
+    return code_a;
+}
+
+void decompressDatabase() {
+    /* 1. Open compressed file */
+    FILE *src = fopen("data/books.lzw", "rb");
+    if (!src) {
+        printf("Error: data/books.lzw not found. Run compression first.\n");
+        return;
+    }
+
+    /* 2. Read and validate header */
+    unsigned char magic[4];
+    if (fread(magic, 1, 4, src) < 4 ||
+        magic[0] != 'L' || magic[1] != 'Z' || magic[2] != 'W' || magic[3] != '\x01') {
+        printf("Error: data/books.lzw is not a valid LZW file.\n");
+        fclose(src);
+        return;
+    }
+    uint64_t orig_size = 0;
+    fread(&orig_size, sizeof(orig_size), 1, src);
+
+    /* 3. Open output file */
+    FILE *dst = fopen("data/books.dat", "wb");
+    if (!dst) {
+        printf("Error: could not open data/books.dat for writing.\n");
+        fclose(src);
+        return;
+    }
+
+    /* 4. Initialise decode dictionary */
+    LZWDecEntry *dict = (LZWDecEntry *)malloc(sizeof(LZWDecEntry) * LZW_MAX_CODES);
+    if (!dict) {
+        printf("Memory allocation error.\n");
+        fclose(src); fclose(dst);
+        return;
+    }
+    for (int i = 0; i < 256; i++) { dict[i].prefix = -1; dict[i].byte = i; }
+    int next_code = 256;
+
+    unsigned char *str_buf = (unsigned char *)malloc(LZW_MAX_CODES);
+    if (!str_buf) {
+        printf("Memory allocation error.\n");
+        free(dict); fclose(src); fclose(dst);
+        return;
+    }
+
+    BitReader br = { src, {0}, 0, 0 };
+
+    /* 5. LZW decoding loop */
+    int old_code = br_read_code(&br);
+    if (old_code == -1) {
+        printf("Error: compressed file is empty.\n");
+        free(dict); free(str_buf); fclose(src); fclose(dst);
+        return;
+    }
+
+    unsigned char first_byte = (unsigned char)old_code;
+    fputc((unsigned char)old_code, dst);
+
+    int code;
+    while ((code = br_read_code(&br)) != -1) {
+        int len;
+        if (code < next_code) {
+            /* code is in the dictionary */
+            len = lzw_decode_string(dict, str_buf, code);
+            first_byte = str_buf[0];
+        } else {
+            /* Special case: code == next_code */
+            str_buf[0] = first_byte;
+            len = lzw_decode_string(dict, str_buf + 1, old_code);
+            str_buf[len] = first_byte;  /* append first_byte */
+            len++;
+            first_byte = str_buf[0];
+        }
+        fwrite(str_buf, 1, (size_t)len, dst);
+
+        /* Add old_code + first_byte to the dictionary */
+        if (next_code < LZW_MAX_CODES) {
+            dict[next_code].prefix = old_code;
+            dict[next_code].byte   = (int)first_byte;
+            next_code++;
+        }
+        old_code = code;
+    }
+
+    free(dict);
+    free(str_buf);
+    fclose(src);
+    fclose(dst);
+
+    printf("Decompression complete!\n");
+    printf("  Restored : data/books.dat  (%llu bytes expected)\n", (unsigned long long)orig_size);
+}
+
+void getDatabaseStatistics() {
+    FILE *f = fopen("data/books.dat", "rb");
+    if (!f) {
+        printf("Error: could not open data/books.dat.\n");
+        return;
+    }
+
+    /* ── Counters ─────────────────────────────────────────────────── */
+    unsigned int total    = 0;
+    unsigned int active   = 0;
+    unsigned int inactive = 0;
+    unsigned int read_count   = 0;
+    unsigned int unread_count = 0;
+
+    unsigned short oldest_year = 9999;
+    unsigned short newest_year = 0;
+    char oldest_title[MAX_TITLE_LENGTH]  = "";
+    char newest_title[MAX_TITLE_LENGTH]  = "";
+
+    /* For top-author / top-theme we keep a small dynamic list */
+    typedef struct { char name[MAX_AUTHOR_NAME_LENGTH]; unsigned int count; } AuthorStat;
+    typedef struct { char name[MAX_THEME_LENGTH];       unsigned int count; } ThemeStat;
+
+    AuthorStat *authors = NULL;
+    ThemeStat  *themes  = NULL;
+    unsigned int author_count = 0;
+    unsigned int theme_count  = 0;
+
+    Book tmp = {0};
+
+    while (fread(&tmp, sizeof(Book), 1, f)) {
+        total++;
+        if (tmp.active)   active++;
+        else              inactive++;
+        if (tmp.read)     read_count++;
+        else              unread_count++;
+
+        /* Oldest / Newest (only active books) */
+        if (tmp.active) {
+            if (tmp.releaseYear < oldest_year) {
+                oldest_year = tmp.releaseYear;
+                strncpy(oldest_title, tmp.title, MAX_TITLE_LENGTH - 1);
+            }
+            if (tmp.releaseYear > newest_year) {
+                newest_year = tmp.releaseYear;
+                strncpy(newest_title, tmp.title, MAX_TITLE_LENGTH - 1);
+            }
+        }
+
+        /* ── Author frequency ───────────────────────────────────── */
+        bool found_author = false;
+        for (unsigned int i = 0; i < author_count; i++) {
+            if (strcmp(authors[i].name, tmp.author) == 0) {
+                authors[i].count++;
+                found_author = true;
+                break;
+            }
+        }
+        if (!found_author) {
+            AuthorStat *tmp_a = realloc(authors, (author_count + 1) * sizeof(AuthorStat));
+            if (tmp_a) {
+                authors = tmp_a;
+                strncpy(authors[author_count].name, tmp.author, MAX_AUTHOR_NAME_LENGTH - 1);
+                authors[author_count].name[MAX_AUTHOR_NAME_LENGTH - 1] = '\0';
+                authors[author_count].count = 1;
+                author_count++;
+            }
+        }
+
+        /* ── Theme frequency ────────────────────────────────────── */
+        bool found_theme = false;
+        for (unsigned int i = 0; i < theme_count; i++) {
+            if (strcmp(themes[i].name, tmp.theme) == 0) {
+                themes[i].count++;
+                found_theme = true;
+                break;
+            }
+        }
+        if (!found_theme) {
+            ThemeStat *tmp_t = realloc(themes, (theme_count + 1) * sizeof(ThemeStat));
+            if (tmp_t) {
+                themes = tmp_t;
+                strncpy(themes[theme_count].name, tmp.theme, MAX_THEME_LENGTH - 1);
+                themes[theme_count].name[MAX_THEME_LENGTH - 1] = '\0';
+                themes[theme_count].count = 1;
+                theme_count++;
+            }
+        }
+    }
+    fclose(f);
+
+    /* ── Find top author & theme ───────────────────────────────── */
+    char top_author[MAX_AUTHOR_NAME_LENGTH] = "N/A";
+    unsigned int top_author_count = 0;
+    for (unsigned int i = 0; i < author_count; i++) {
+        if (authors[i].count > top_author_count) {
+            top_author_count = authors[i].count;
+            strncpy(top_author, authors[i].name, MAX_AUTHOR_NAME_LENGTH - 1);
+        }
+    }
+
+    char top_theme[MAX_THEME_LENGTH] = "N/A";
+    unsigned int top_theme_count = 0;
+    for (unsigned int i = 0; i < theme_count; i++) {
+        if (themes[i].count > top_theme_count) {
+            top_theme_count = themes[i].count;
+            strncpy(top_theme, themes[i].name, MAX_THEME_LENGTH - 1);
+        }
+    }
+
+    free(authors);
+    free(themes);
+
+    /* ── File size ─────────────────────────────────────────────── */
+    long db_size = getDatabaseSizeInBytes();
+
+    /* ── Print dashboard ───────────────────────────────────────── */
+    printf("\n╔══════════════════════════════════════════╗\n");
+    printf("║          DATABASE STATISTICS             ║\n");
+    printf("╠══════════════════════════════════════════╣\n");
+
+    if (total == 0) {
+        printf("║  No books found in the database.         ║\n");
+        printf("╚══════════════════════════════════════════╝\n");
+        return;
+    }
+
+    float pct_active = total ? 100.0f * active   / total : 0.0f;
+    float pct_read   = total ? 100.0f * read_count / total : 0.0f;
+
+    printf("║  Total books      : %-5u                ║\n", total);
+    printf("║  Active           : %-5u  (%.1f%%)        ║\n", active,   pct_active);
+    printf("║  Inactive         : %-5u  (%.1f%%)        ║\n", inactive, 100.0f - pct_active);
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║  Read             : %-5u  (%.1f%%)        ║\n", read_count,   pct_read);
+    printf("║  Unread           : %-5u  (%.1f%%)        ║\n", unread_count, 100.0f - pct_read);
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║  Unique authors   : %-5u                ║\n", author_count);
+    printf("║  Unique themes    : %-5u                ║\n", theme_count);
+    printf("╠══════════════════════════════════════════╣\n");
+
+    if (oldest_year != 9999)
+        printf("║  Oldest book  (%4hu): %-20.20s║\n", oldest_year, oldest_title);
+    if (newest_year != 0)
+        printf("║  Newest book  (%4hu): %-20.20s║\n", newest_year, newest_title);
+
+    printf("╠══════════════════════════════════════════╣\n");
+    printf("║  Top author  : %-26.26s║\n", top_author);
+    printf("║    (%u book%s)                              ║\n",
+           top_author_count, top_author_count == 1 ? " " : "s");
+    printf("║  Top theme   : %-26.26s║\n", top_theme);
+    printf("║    (%u book%s)                              ║\n",
+           top_theme_count, top_theme_count == 1 ? " " : "s");
+
+    printf("╠══════════════════════════════════════════╣\n");
+    if (db_size >= 0)
+        printf("║  File size        : %-8ld bytes      ║\n", db_size);
+
+    printf("╚══════════════════════════════════════════╝\n");
 }
 
 long getDatabaseSizeInBytes() {
